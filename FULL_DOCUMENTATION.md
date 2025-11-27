@@ -324,7 +324,7 @@
 #### 🔃 Push Jenkinsfile to GitHub
 
 ```bash
-git config --global user.email "blessedman776@gmail.com"
+git config --global user.email "dataguru97@gmail.com"
 git config --global user.name "data-guru0"
 
 git add .
