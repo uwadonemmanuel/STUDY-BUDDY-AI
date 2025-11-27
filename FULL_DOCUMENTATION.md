@@ -324,7 +324,7 @@
 #### 🔃 Push Jenkinsfile to GitHub
 
 ```bash
-git config --global user.email "dataguru97@gmail.com"
+git config --global user.email "uwadonemmanuel@gmail.com"
 git config --global user.name "data-guru0"
 
 git add .
@@ -377,7 +377,7 @@ git pull origin main
 #### 🐳 Create DockerHub Repository
 
 1. Go to [https://hub.docker.com](https://hub.docker.com)
-2. Create a new repository, e.g., `dataguru97/testing-9`
+2. Create a new repository, e.g., `uwadonemmanuel/testing-9`
 
 ---
 
@@ -392,7 +392,7 @@ git pull origin main
 #### ➕ Add DockerHub Credentials to Jenkins
 
 1. Go to **Jenkins → Manage Jenkins → Credentials → Global → Add Credentials**
-   - **Username**: DockerHub username (e.g., `dataguru97`)
+   - **Username**: DockerHub username (e.g., `uwadonemmanuel`)
    - **Password**: The DockerHub token
    - **ID**: `gitops-dockerhub`
    - **Description**: `DockerHub Access Token`
@@ -424,7 +424,7 @@ git push origin main
 3. Click **Build Now**
 
 ✅ If successful, your image will be available on DockerHub:  
-`https://hub.docker.com/r/dataguru97/testing-9`
+`https://hub.docker.com/r/uwadonemmanuel/testing-9`
 
 ---
 

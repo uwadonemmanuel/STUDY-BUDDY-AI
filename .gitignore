@@ -4,3 +4,4 @@ venv/
 LLMOPS_3.egg-info/
 results/
 Jenkinsfile/
+Jenkinsfile_copy
