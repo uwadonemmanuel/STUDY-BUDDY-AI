@@ -59,14 +59,17 @@ pipeline {
             steps {
                 sh '''
                 echo 'installing Kubectl & ArgoCD cli...'
-                curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+                echo "Downloading kubectl version: ${KUBECTL_VERSION}"
+                curl --retry 3 --retry-delay 5 -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
                 chmod +x kubectl
                 mv kubectl /usr/local/bin/kubectl
-                curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+                curl -sSL --retry 3 --retry-delay 5 -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
                 chmod +x /usr/local/bin/argocd
                 '''
             }
         }
+
         stage('Apply Kubernetes & Sync App with ArgoCD') {
             steps {
                 script {
