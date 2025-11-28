@@ -587,7 +587,7 @@ cat /home/gyrogodnon/.minikube/profiles/minikube/client.crt | base64 -w 0; echo
 cat /home/gyrogodnon/.minikube/profiles/minikube/client.key | base64 -w 0; echo
 ```
 
-Copy each base64 string and replace the corresponding `certificate-authority-data`, `client-certificate-data`, and `client-key-data` fields in your config file.
+Copy each base64 string and replace the corresponding `certificate-authority-data`, `client-certificate-data`, and `client-key-data` fields in your config file. *** But remember to change `certificate-authority` to `certificate-authority-data`, `client-certificate` to `client-certificate-data`, and `client-key` to `client-key-data`
 
 ---
 
@@ -775,6 +775,7 @@ minikube tunnel
 ```bash
 kubectl port-forward svc/my-service -n argocd --address 0.0.0.0 9090:80
 ```
+Replace my-service with the name in the manifests/service.yaml
 
 ---
 
