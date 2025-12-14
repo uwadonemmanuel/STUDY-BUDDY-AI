@@ -1870,15 +1870,97 @@ curl http://<VM_EXTERNAL_IP>:9090
 
 #### Step 8: Check Firewall Rules
 
-```bash
-# Check GCP firewall rules (if using GCP)
-# Go to: GCP Console → VPC Network → Firewall Rules
-# Ensure there's a rule allowing ingress on port 9090
+**For GCP (Google Cloud Platform):**
 
-# Check local firewall (if ufw is enabled)
-sudo ufw status
-sudo ufw allow 9090/tcp
+Create a firewall rule to allow external access to port 9090:
+
+**Method 1: Via GCP Console (Recommended)**
+
+1. **Open GCP Console:**
+   - Go to: https://console.cloud.google.com/
+   - Make sure you're in the correct project
+
+2. **Navigate to Firewall Rules:**
+   - Click on **"☰" (Hamburger menu)** in the top left
+   - Go to **"VPC Network"** → **"Firewall"**
+   - Or direct link: https://console.cloud.google.com/networking/firewalls
+
+3. **Create New Firewall Rule:**
+   - Click **"CREATE FIREWALL RULE"** button at the top
+
+4. **Fill in the Firewall Rule Details:**
+   - **Name:** `allow-port-9090`
+   - **Description:** `Allow ingress traffic on port 9090 for Study Buddy AI application`
+   - **Network:** Select `default` (or your VPC network name)
+   - **Priority:** `1000` (default is fine)
+   - **Direction of traffic:** Select **"Ingress"**
+   - **Action on match:** Select **"Allow"**
+
+5. **Configure Targets:**
+   - **Targets:** Select **"All instances in the network"**
+   - (Or select specific target tags if you want to limit to specific VMs)
+
+6. **Configure Source:**
+   - **Source IP ranges:** Enter `0.0.0.0/0` (allows from anywhere)
+   - (Or restrict to specific IP ranges for security)
+
+7. **Configure Protocols and Ports:**
+   - Select **"Specified protocols and ports"**
+   - Check **"tcp"**
+   - In the text box, enter: `9090`
+
+8. **Create the Rule:**
+   - Click **"CREATE"** button at the bottom
+   - Wait 1-2 minutes for the rule to propagate
+
+9. **Verify the Rule:**
+   - You should see `allow-port-9090` in the firewall rules list
+   - Status should be **"Enabled"**
+
+**Method 2: Via gcloud CLI (if authenticated)**
+
+```bash
+# Authenticate first
+gcloud auth login
+
+# Set your project
+gcloud config set project YOUR_PROJECT_ID
+
+# Create firewall rule
+gcloud compute firewall-rules create allow-port-9090 \
+  --allow tcp:9090 \
+  --source-ranges 0.0.0.0/0 \
+  --description "Allow port 9090 for Study Buddy AI" \
+  --network default \
+  --direction INGRESS \
+  --priority 1000
 ```
+
+**Method 3: Check Local Firewall (if ufw is enabled)**
+
+```bash
+# Check local firewall status
+sudo ufw status
+
+# If ufw is active, allow port 9090
+sudo ufw allow 9090/tcp
+
+# Verify
+sudo ufw status | grep 9090
+```
+
+**After creating the firewall rule:**
+
+1. Wait 1-2 minutes for the rule to propagate
+2. Test external access:
+   ```bash
+   # Get your external IP
+   curl ifconfig.me
+   
+   # Test from your local machine (not the VM)
+   curl -I http://<YOUR_EXTERNAL_IP>:9090
+   ```
+3. Open in browser: `http://<YOUR_EXTERNAL_IP>:9090`
 
 #### Step 9: Check Application Deployment
 
