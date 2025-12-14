@@ -839,4 +839,1251 @@ http://<VM_EXTERNAL_IP>:9090
 
 ---
 
+# 11. Restore from Machine Image (After Instance Deletion)
+
+If you created a machine image from your GCP instance and then deleted the original instance, follow these steps to restore everything:
+
+---
+
+## 📸 Step 1: Create New VM Instance from Machine Image
+
+1. Go to **GCP Console → Compute Engine → VM Instances**
+2. Click **"Create Instance"**
+3. Configure the instance:
+   - **Name**: `gitops` (or your preferred name)
+   - **Machine Type**:
+     - Series: `E2`
+     - Preset: `Standard`
+     - Memory: `16 GB RAM`
+   - **Boot Disk**: 
+     - Click **"Change"**
+     - Select **"Images"** tab
+     - Choose your **machine image** from the list
+     - Change size to `256 GB` if needed
+   - **Networking**:
+     - Enable HTTP and HTTPS traffic
+4. Click **"Create"**
+
+---
+
+## 🔌 Step 2: Connect to the New VM Instance
+
+- Use the **SSH** option provided in GCP to connect to the VM from the browser
+- Or use SSH from your local machine:
+  ```bash
+  gcloud compute ssh gitops --zone=YOUR_ZONE
+  ```
+
+---
+
+## 🐳 Step 3: Verify and Start Docker
+
+Check if Docker is installed and start it:
+
+```bash
+# Check Docker status
+systemctl status docker
+
+# If Docker is not running, start it
+sudo systemctl start docker
+sudo systemctl enable docker
+
+# Verify Docker is working
+docker ps
+docker run hello-world
+```
+
+---
+
+## 🚀 Step 4: Start Minikube
+
+Since Minikube was stopped when the instance was deleted, you need to restart it:
+
+```bash
+# Check Minikube status
+minikube status
+
+# Start Minikube cluster
+minikube start
+
+# Wait for Minikube to be ready (this may take a few minutes)
+minikube status
+
+# Verify Kubernetes cluster
+kubectl get nodes
+kubectl cluster-info
+```
+
+**Note**: If Minikube fails to start, you may need to delete the old cluster and create a new one:
+
+```bash
+# Delete old Minikube cluster
+minikube delete
+
+# Start fresh Minikube cluster
+minikube start
+```
+
+---
+
+## 🔄 Step 5: Restart Jenkins Container
+
+Check if Jenkins container exists and restart it:
+
+```bash
+# Check if Jenkins container exists
+docker ps -a | grep jenkins
+
+# If Jenkins container exists but is stopped, start it
+docker start jenkins
+
+# If Jenkins container doesn't exist, create it again
+docker run -d --name jenkins \
+  -p 8080:8080 \
+  -p 50000:50000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v $(which docker):/usr/bin/docker \
+  -u root \
+  -e DOCKER_GID=$(getent group docker | cut -d: -f3) \
+  --network minikube \
+  jenkins/jenkins:lts
+
+# Verify Jenkins is running
+docker ps
+docker logs jenkins
+```
+
+**Important**: If you created a new Jenkins container, you'll need to:
+- Get the new admin password: `docker logs jenkins`
+- Reconfigure Jenkins (plugins, credentials, pipelines)
+- Re-add all credentials (GitHub token, DockerHub token, kubeconfig)
+
+---
+
+## 🔧 Step 6: Update Jenkins Network (if needed)
+
+If Jenkins was recreated, ensure it's on the Minikube network:
+
+```bash
+# Check Minikube network
+docker network ls | grep minikube
+
+# If Jenkins is not on minikube network, connect it
+docker network connect minikube jenkins
+
+# Verify
+docker inspect jenkins | grep NetworkMode
+```
+
+---
+
+## 📦 Step 7: Restore ArgoCD
+
+ArgoCD should be restored from the machine image, but verify and restart if needed:
+
+```bash
+# Check ArgoCD namespace
+kubectl get namespace | grep argocd
+
+# If namespace doesn't exist, create it
+kubectl create ns argocd
+
+# Check ArgoCD pods
+kubectl get pods -n argocd
+
+# If pods are not running, reinstall ArgoCD
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Wait for all pods to be ready
+kubectl get pods -n argocd -w
+```
+
+**Wait until all ArgoCD pods are in "Running" state before proceeding.**
+
+---
+
+## 🔌 Step 8: Reconfigure ArgoCD Service
+
+Check and update ArgoCD service to NodePort:
+
+```bash
+# Check current service type
+kubectl get svc -n argocd
+
+# If argocd-server is ClusterIP, change to NodePort
+kubectl edit svc argocd-server -n argocd
+# Change: type: ClusterIP → type: NodePort
+# Save and exit (Ctrl+X, Y, Enter)
+
+# Get the new NodePort
+kubectl get svc -n argocd
+# Note the NodePort number (e.g., 31704)
+```
+
+---
+
+## 🔐 Step 9: Get ArgoCD Admin Password
+
+```bash
+# Get the admin password
+kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
+**Note**: If the secret doesn't exist, ArgoCD will create it automatically on first install.
+
+---
+
+## 🌐 Step 10: Update Firewall Rules
+
+Since you have a new VM instance with a new external IP, update firewall rules:
+
+1. Go to **GCP Console → VPC Network → Firewall**
+2. Check if the `allow-jenkins` rule exists
+3. If not, create it:
+   - Name: `allow-jenkins`
+   - Direction: `ingress`
+   - Action: `allow`
+   - Targets: `All instances`
+   - Source IP ranges: `0.0.0.0/0`
+   - Allowed protocols and ports: `all`
+
+---
+
+## 🔄 Step 11: Update IP Addresses in Configuration
+
+Since the VM has a new external IP, update the following:
+
+### A. Update GitHub Webhook
+
+1. Go to **GitHub Repository → Settings → Webhooks**
+2. Edit the existing webhook
+3. Update **Payload URL** to: `http://<NEW_VM_EXTERNAL_IP>:8080/github-webhook/`
+4. Save
+
+### B. Update ArgoCD Login in Jenkinsfile (if hardcoded)
+
+If your Jenkinsfile has a hardcoded ArgoCD IP, update it:
+
+```bash
+# Get new VM external IP
+curl ifconfig.me
+# Or check in GCP Console
+
+# Get ArgoCD NodePort
+kubectl get svc -n argocd argocd-server
+
+# Update Jenkinsfile with new IP:PORT
+```
+
+### C. Update kubeconfig (if needed)
+
+If you need to regenerate kubeconfig:
+
+```bash
+# Get cluster info
+kubectl cluster-info
+
+# The cluster URL might have changed, update in Jenkins credentials if needed
+```
+
+---
+
+## 🚀 Step 12: Restart Services and Verify
+
+### Start Minikube Tunnel (in a separate terminal)
+
+**Option 1: Run in background with nohup (Simple)**
+
+```bash
+# Start Minikube tunnel in background
+nohup minikube tunnel > /tmp/minikube-tunnel.log 2>&1 &
+
+# Check if it's running
+ps aux | grep "minikube tunnel"
+
+# View logs
+tail -f /tmp/minikube-tunnel.log
+
+# To stop it later
+pkill -f "minikube tunnel"
+```
+
+**Option 2: Run in screen session (Recommended)**
+
+```bash
+# Install screen if not available
+sudo apt-get install screen -y
+
+# Start a screen session
+screen -S minikube-tunnel
+
+# Inside screen, run:
+minikube tunnel
+
+# Detach from screen: Press Ctrl+A, then D
+# Reattach later: screen -r minikube-tunnel
+# Kill screen session: screen -X -S minikube-tunnel quit
+```
+
+**Option 3: Run as systemd service (Persistent)**
+
+```bash
+# Create systemd service file
+sudo vi /etc/systemd/system/minikube-tunnel.service
+```
+
+Add this content:
+```ini
+[Unit]
+Description=Minikube Tunnel
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+ExecStart=/usr/local/bin/minikube tunnel
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then:
+```bash
+# Replace YOUR_USERNAME with your actual username
+sudo systemctl daemon-reload
+sudo systemctl enable minikube-tunnel.service
+sudo systemctl start minikube-tunnel.service
+
+# Check status
+sudo systemctl status minikube-tunnel.service
+
+# View logs
+sudo journalctl -u minikube-tunnel.service -f
+```
+
+### Port Forward ArgoCD (in another terminal)
+
+**Option 1: Run in background with nohup**
+
+```bash
+# Get the NodePort first
+NODEPORT=$(kubectl get svc -n argocd argocd-server -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}')
+
+# Port forward in background
+nohup kubectl port-forward --address 0.0.0.0 service/argocd-server ${NODEPORT}:80 -n argocd > /tmp/argocd-portforward.log 2>&1 &
+
+# Check if it's running
+ps aux | grep "port-forward.*argocd-server"
+
+# View logs
+tail -f /tmp/argocd-portforward.log
+
+# To stop it later
+pkill -f "port-forward.*argocd-server"
+```
+
+**Option 2: Run in screen session**
+
+```bash
+# Start a screen session for ArgoCD port forwarding
+screen -S argocd-portforward
+
+# Get NodePort
+NODEPORT=$(kubectl get svc -n argocd argocd-server -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}')
+
+# Run port forward
+kubectl port-forward --address 0.0.0.0 service/argocd-server ${NODEPORT}:80 -n argocd
+
+# Detach: Ctrl+A, then D
+# Reattach: screen -r argocd-portforward
+```
+
+**Option 3: Run as systemd service**
+
+```bash
+# Create systemd service file
+sudo vi /etc/systemd/system/argocd-portforward.service
+```
+
+Add this content (replace NODEPORT with actual value):
+```ini
+[Unit]
+Description=ArgoCD Port Forward
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+ExecStart=/usr/local/bin/kubectl port-forward --address 0.0.0.0 service/argocd-server 32166:80 -n argocd
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable argocd-portforward.service
+sudo systemctl start argocd-portforward.service
+sudo systemctl status argocd-portforward.service
+```
+
+### Port Forward Application (if needed)
+
+**Option 1: Run in background with nohup**
+
+```bash
+# Port forward application in background
+nohup kubectl port-forward svc/llmops-service -n argocd --address 0.0.0.0 9090:80 > /tmp/app-portforward.log 2>&1 &
+
+# Check if it's running
+s
+
+# View logs
+tail -f /tmp/app-portforward.log
+
+# To stop it later
+pkill -f "port-forward.*llmops-service"
+```
+
+**Option 2: Run in screen session**
+
+```bash
+# Start a screen session for app port forwarding
+screen -S app-portforward
+
+# Run port forward
+kubectl port-forward svc/llmops-service -n argocd --address 0.0.0.0 9090:80
+
+# Detach: Ctrl+A, then D
+# Reattach: screen -r app-portforward
+```
+
+**Option 3: Run as systemd service**
+
+```bash
+# Create systemd service file
+sudo vi /etc/systemd/system/app-portforward.service
+```
+
+Add this content:
+```ini
+[Unit]
+Description=Application Port Forward
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+ExecStart=/usr/local/bin/kubectl port-forward svc/llmops-service -n argocd --address 0.0.0.0 9090:80
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable app-portforward.service
+sudo systemctl start app-portforward.service
+sudo systemctl status app-portforward.service
+```
+
+## 🔄 Setting Up Persistent Port Forwarding with systemd
+
+To make port forwarding persistent and start automatically on boot, set up systemd services:
+
+### Prerequisites
+
+```bash
+# Get your username
+whoami
+
+# Get your home directory
+echo $HOME
+
+# Get kubectl path
+which kubectl
+
+# Get minikube path
+which minikube
+
+# Get KUBECONFIG path (usually ~/.kube/config)
+echo $KUBECONFIG || echo ~/.kube/config
+```
+
+### Step 1: Create Minikube Tunnel Service
+
+```bash
+# Create the service file
+sudo vi /etc/systemd/system/minikube-tunnel.service
+```
+
+Add this content (replace `YOUR_USERNAME` with your actual username):
+
+```ini
+[Unit]
+Description=Minikube Tunnel
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+Environment="HOME=/home/YOUR_USERNAME"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/usr/local/bin/minikube tunnel
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Important:** Replace `YOUR_USERNAME` with your actual username (from `whoami` command).
+
+### Step 2: Create ArgoCD Port Forward Service
+
+```bash
+# First, get the NodePort (replace with your actual NodePort)
+kubectl get svc -n argocd argocd-server -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}'
+
+# Create the service file
+sudo vi /etc/systemd/system/argocd-portforward.service
+```
+
+Add this content (replace `YOUR_USERNAME` and `NODEPORT`):
+
+```ini
+[Unit]
+Description=ArgoCD Port Forward
+After=network.target minikube-tunnel.service
+Wants=minikube-tunnel.service
+Requires=minikube-tunnel.service
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+Environment="HOME=/home/YOUR_USERNAME"
+Environment="KUBECONFIG=/home/YOUR_USERNAME/.kube/config"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/usr/local/bin/kubectl port-forward --address 0.0.0.0 service/argocd-server NODEPORT:80 -n argocd
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Important:** 
+- Replace `YOUR_USERNAME` with your actual username
+- Replace `NODEPORT` with the actual NodePort from the command above (e.g., `32166`)
+
+### Step 3: Create Application Port Forward Service
+
+```bash
+# Create the service file
+sudo vi /etc/systemd/system/app-portforward.service
+```
+
+Add this content (replace `YOUR_USERNAME`):
+
+```ini
+[Unit]
+Description=Application Port Forward
+After=network.target minikube-tunnel.service
+Wants=minikube-tunnel.service
+Requires=minikube-tunnel.service
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+Environment="HOME=/home/YOUR_USERNAME"
+Environment="KUBECONFIG=/home/YOUR_USERNAME/.kube/config"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/usr/local/bin/kubectl port-forward svc/llmops-service -n argocd --address 0.0.0.0 9090:80
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Important:** Replace `YOUR_USERNAME` with your actual username.
+
+### Step 4: Enable and Start Services
+
+```bash
+# Reload systemd to recognize new services
+sudo systemctl daemon-reload
+
+# Enable services to start on boot
+sudo systemctl enable minikube-tunnel.service
+sudo systemctl enable argocd-portforward.service
+sudo systemctl enable app-portforward.service
+
+# Start services
+sudo systemctl start minikube-tunnel.service
+sudo systemctl start argocd-portforward.service
+sudo systemctl start app-portforward.service
+
+# Check status of all services
+sudo systemctl status minikube-tunnel.service
+sudo systemctl status argocd-portforward.service
+sudo systemctl status app-portforward.service
+```
+
+### Step 5: Verify Services Are Running
+
+```bash
+# Check all services status
+sudo systemctl list-units | grep -E "(tunnel|portforward)"
+
+# Check if processes are running
+ps aux | grep -E "(minikube tunnel|port-forward)" | grep -v grep
+
+# View logs
+sudo journalctl -u minikube-tunnel.service -f
+sudo journalctl -u argocd-portforward.service -f
+sudo journalctl -u app-portforward.service -f
+```
+
+### Step 6: Test Access
+
+- **ArgoCD**: `http://<VM_EXTERNAL_IP>:<NODEPORT>`
+- **Application**: `http://<VM_EXTERNAL_IP>:9090`
+
+### Managing Services
+
+**Stop a service:**
+```bash
+sudo systemctl stop minikube-tunnel.service
+sudo systemctl stop argocd-portforward.service
+sudo systemctl stop app-portforward.service
+```
+
+**Start a service:**
+```bash
+sudo systemctl start minikube-tunnel.service
+sudo systemctl start argocd-portforward.service
+sudo systemctl start app-portforward.service
+```
+
+**Restart a service:**
+```bash
+sudo systemctl restart minikube-tunnel.service
+sudo systemctl restart argocd-portforward.service
+sudo systemctl restart app-portforward.service
+```
+
+**Disable auto-start on boot:**
+```bash
+sudo systemctl disable minikube-tunnel.service
+sudo systemctl disable argocd-portforward.service
+sudo systemctl disable app-portforward.service
+```
+
+**View service logs:**
+```bash
+# View recent logs
+sudo journalctl -u minikube-tunnel.service -n 50
+
+# Follow logs in real-time
+sudo journalctl -u argocd-portforward.service -f
+
+# View logs since boot
+sudo journalctl -u app-portforward.service -b
+```
+
+### Troubleshooting
+
+**If services fail to start:**
+
+1. **Check service status:**
+   ```bash
+   sudo systemctl status minikube-tunnel.service
+   ```
+
+2. **Check logs for errors:**
+   ```bash
+   sudo journalctl -u minikube-tunnel.service -n 100
+   ```
+
+3. **Verify paths are correct:**
+   ```bash
+   which minikube
+   which kubectl
+   ```
+
+4. **Check if minikube is running:**
+   ```bash
+   minikube status
+   ```
+
+5. **Verify KUBECONFIG:**
+   ```bash
+   kubectl get nodes
+   ```
+
+**If port forwarding fails:**
+
+- Ensure minikube tunnel is running first
+- Check if the NodePort is correct: `kubectl get svc -n argocd argocd-server`
+- Verify services exist: `kubectl get svc -n argocd`
+
+**If services don't start on boot:**
+
+- Check if services are enabled: `sudo systemctl is-enabled minikube-tunnel.service`
+- Verify systemd dependencies: `systemctl list-dependencies minikube-tunnel.service`
+
+### Quick Reference: Managing Background Processes
+
+**Check all port forwarding processes:**
+```bash
+ps aux | grep port-forward
+ps aux | grep "minikube tunnel"
+```
+
+**Stop all port forwarding:**
+```bash
+pkill -f "port-forward"
+pkill -f "minikube tunnel"
+```
+
+**List all screen sessions:**
+```bash
+screen -ls
+```
+
+**Kill a specific screen session:**
+```bash
+screen -X -S session-name quit
+```
+
+**Check systemd services:**
+```bash
+sudo systemctl list-units | grep -E "(tunnel|portforward)"
+```
+
+---
+
+## ✅ Step 13: Verify Everything is Working
+
+### Verify Docker
+```bash
+docker ps
+```
+
+### Verify Minikube
+```bash
+minikube status
+kubectl get nodes
+```
+
+### Verify Jenkins
+- Access: `http://<NEW_VM_EXTERNAL_IP>:8080`
+- Login with admin credentials
+- Check if pipelines are configured
+
+### Verify ArgoCD
+- Access: `http://<NEW_VM_EXTERNAL_IP>:<NODEPORT>`
+- Login with admin and password from Step 9
+- Check if applications are synced
+
+### Verify Application
+- Access: `http://<NEW_VM_EXTERNAL_IP>:9090`
+- Should see Study Buddy AI application
+
+**If application is not accessible, troubleshoot:**
+
+#### Step 1: Check if port-forward is running
+```bash
+# Check if port-forward process is running
+ps aux | grep "port-forward.*llmops-service"
+
+# If not running, start it:
+nohup kubectl port-forward svc/llmops-service -n argocd --address 0.0.0.0 9090:80 > /tmp/app-portforward.log 2>&1 &
+```
+
+#### Step 2: Check if application pods are running
+```bash
+# Check pods in argocd namespace
+kubectl get pods -n argocd | grep llmops-app
+
+# Check pod status and events
+kubectl describe pod <pod-name> -n argocd
+
+# Check pod logs
+kubectl logs <pod-name> -n argocd
+```
+
+#### Step 3: Check if service exists
+```bash
+# Check service
+kubectl get svc -n argocd | grep llmops-service
+
+# Get service details
+kubectl get svc llmops-service -n argocd -o yaml
+```
+
+#### Step 4: Check if deployment exists and is ready
+```bash
+# Check deployment
+kubectl get deployment -n argocd | grep llmops-app
+
+# Check deployment details
+kubectl describe deployment llmops-app -n argocd
+
+# Check replicasets
+kubectl get rs -n argocd | grep llmops-app
+```
+
+#### Step 5: Verify ArgoCD application status
+```bash
+# List ArgoCD applications
+kubectl get applications -n argocd
+
+# Check application sync status
+argocd app get <app-name>
+
+# If out of sync, sync it
+argocd app sync <app-name>
+```
+
+#### Step 6: Check if minikube tunnel is running
+```bash
+# Check if minikube tunnel is running
+ps aux | grep "minikube tunnel"
+
+# If not running, start it:
+nohup minikube tunnel > /tmp/minikube-tunnel.log 2>&1 &
+```
+
+#### Step 7: Alternative - Use NodePort directly
+```bash
+# Get the NodePort for the service
+kubectl get svc llmops-service -n argocd
+
+# Access via NodePort (if service has NodePort type)
+# http://<VM_EXTERNAL_IP>:<NODEPORT>
+```
+
+#### Step 8: Check firewall rules
+```bash
+# Ensure firewall allows traffic on port 9090
+# In GCP Console: VPC Network → Firewall Rules
+# Should have a rule allowing ingress on port 9090
+```
+
+#### Common Issues and Fixes:
+
+**Issue: Pods in ImagePullBackOff**
+```bash
+# Check if image exists and is accessible
+docker pull blessedman776/studybuddy:<tag>
+
+# Update deployment with correct image tag
+kubectl set image deployment/llmops-app llmops-app=blessedman776/studybuddy:<tag> -n argocd
+```
+
+**Issue: Pods in CrashLoopBackOff**
+```bash
+# Check pod logs for errors
+kubectl logs <pod-name> -n argocd --previous
+
+# Check if GROQ_API_KEY secret exists
+kubectl get secret groq-api-secret -n argocd
+
+# If missing, create it:
+kubectl create secret generic groq-api-secret \
+  --from-literal=GROQ_API_KEY="your-api-key" \
+  -n argocd
+```
+
+**Issue: Port-forward dies immediately**
+```bash
+# Check if service selector matches pod labels
+kubectl get svc llmops-service -n argocd -o yaml | grep selector
+kubectl get pods -n argocd --show-labels | grep llmops-app
+
+# Ensure labels match
+```
+
+**Issue: Cannot connect to port 9090**
+```bash
+# Test from VM itself
+curl http://localhost:9090
+
+# Check if port is listening
+netstat -tlnp | grep 9090
+# OR
+ss -tlnp | grep 9090
+
+# Check firewall
+sudo ufw status
+# OR check GCP firewall rules
+```
+
+---
+
+## 🔄 Step 14: Re-sync ArgoCD Applications
+
+If ArgoCD applications are out of sync:
+
+```bash
+# List applications
+kubectl get applications -n argocd
+
+# Sync manually (replace 'gitops' with your app name)
+argocd app sync gitops
+
+# Or use ArgoCD UI to sync
+```
+
+---
+
+## 📝 Step 15: Reconfigure Jenkins (if container was recreated)
+
+If you had to recreate the Jenkins container, you'll need to:
+
+1. **Re-add Credentials**:
+   - GitHub Personal Access Token
+   - DockerHub Access Token
+   - kubeconfig file
+
+2. **Reconfigure Pipeline**:
+   - Create pipeline job again
+   - Configure SCM settings
+   - Update any hardcoded IPs
+
+3. **Reinstall Plugins** (if needed):
+   - Docker
+   - Docker Pipeline
+   - Kubernetes
+
+---
+
+## 🎯 Quick Restart Checklist
+
+Use this checklist to quickly verify everything is restored:
+
+- [ ] New VM instance created from machine image
+- [ ] Docker is running (`systemctl status docker`)
+- [ ] Minikube is started (`minikube status`)
+- [ ] Jenkins container is running (`docker ps | grep jenkins`)
+- [ ] ArgoCD pods are running (`kubectl get pods -n argocd`)
+- [ ] ArgoCD service is NodePort (`kubectl get svc -n argocd`)
+- [ ] Firewall rules are configured
+- [ ] GitHub webhook updated with new IP
+- [ ] Jenkins credentials re-added (if needed)
+- [ ] ArgoCD applications synced
+- [ ] Application accessible via browser
+
+---
+
+## 🆘 Troubleshooting
+
+### Minikube won't start
+```bash
+minikube delete
+minikube start --driver=docker
+```
+
+### Jenkins can't access Docker
+```bash
+# Ensure Jenkins is on minikube network
+docker network connect minikube jenkins
+
+# Restart Jenkins
+docker restart jenkins
+```
+
+### ArgoCD pods stuck in Pending
+```bash
+# Check node resources
+kubectl describe nodes
+
+# Check pod events
+kubectl describe pod <pod-name> -n argocd
+```
+
+### ArgoCD pods in ImagePullBackOff status
+
+This error means Kubernetes cannot pull container images. Here's how to fix it:
+
+#### Step 1: Diagnose the issue
+```bash
+# Check detailed pod status
+kubectl describe pod argocd-server-57d9cc9bcf-q8cnd -n argocd
+
+# Check events for all pods
+kubectl get events -n argocd --sort-by='.lastTimestamp'
+```
+
+#### Step 2: Check network connectivity
+
+**First, test connectivity from the VM itself:**
+
+```bash
+# Test if you can reach container registries from VM
+curl -I https://quay.io
+curl -I https://docker.io
+ping -c 3 8.8.8.8  # Test basic internet connectivity
+
+# Test DNS resolution
+nslookup quay.io
+nslookup docker.io
+```
+
+**Then test from inside Minikube:**
+
+```bash
+# Test DNS from Minikube
+minikube ssh -- nslookup quay.io
+minikube ssh -- nslookup docker.io
+
+# Test internet connectivity from Minikube
+minikube ssh -- ping -c 3 8.8.8.8
+
+# Try to pull an image manually from Minikube
+minikube ssh -- docker pull quay.io/argoproj/argocd:v2.8.4
+```
+
+**If DNS or connectivity fails, fix DNS configuration:**
+
+**Method 1: Configure CoreDNS in Kubernetes (Recommended)**
+
+```bash
+# Get the CoreDNS configmap
+kubectl get configmap coredns -n kube-system -o yaml > coredns-config.yaml
+
+# Edit the configmap to add Google DNS as forward
+kubectl edit configmap coredns -n kube-system
+
+# In the editor, find the "forward" section and change it to:
+# forward . 8.8.8.8 8.8.4.4
+# Or add it if it doesn't exist
+
+# Restart CoreDNS pods
+kubectl delete pods -n kube-system -l k8s-app=kube-dns
+
+# Wait for CoreDNS to restart
+kubectl get pods -n kube-system -w
+
+# Test DNS from Minikube
+minikube ssh -- nslookup quay.io
+```
+
+**Method 2: Configure DNS in Minikube's Docker container**
+
+```bash
+# SSH into Minikube
+minikube ssh
+
+# Edit DNS configuration
+sudo vi /etc/resolv.conf
+
+# Add or replace with:
+# nameserver 8.8.8.8
+# nameserver 8.8.4.4
+
+# Save and exit, then restart Docker
+sudo systemctl restart docker
+
+# Exit Minikube
+exit
+
+# Test DNS
+minikube ssh -- nslookup quay.io
+```
+
+**Method 3: Delete and recreate Minikube (if above methods don't work)**
+
+```bash
+# Delete Minikube
+minikube delete
+
+# Start fresh Minikube
+minikube start
+
+# Then configure CoreDNS using Method 1 above
+```
+
+**Method 4: Use host's DNS resolver**
+
+```bash
+# Get host's DNS server
+cat /etc/resolv.conf
+
+# Configure CoreDNS to forward to host DNS (see Method 1)
+```
+
+#### Step 3: Reinstall ArgoCD (Recommended Solution)
+
+The easiest fix is to reinstall ArgoCD, which will pull fresh images:
+
+```bash
+# Delete existing ArgoCD installation
+kubectl delete namespace argocd
+
+# Wait a moment for cleanup
+sleep 10
+
+# Reinstall ArgoCD
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Wait for pods to start (this may take 2-5 minutes)
+kubectl get pods -n argocd -w
+
+# Check pod status
+kubectl get pods -n argocd
+```
+
+#### Step 4: If reinstall doesn't work, try pulling images manually
+
+```bash
+# Enter Minikube's Docker environment
+minikube ssh
+
+# Inside Minikube, pull ArgoCD images manually
+docker pull quay.io/argoproj/argocd:v2.8.4
+docker pull quay.io/argoproj/argocd-repo-server:v2.8.4
+docker pull quay.io/argoproj/argocd-dex:v2.8.4
+docker pull quay.io/argoproj/argocd-applicationset:v0.4.1
+docker pull redis:7-alpine
+docker pull quay.io/argoproj/argocd-notifications:v1.8.0
+
+# Exit Minikube
+exit
+
+# Delete pods to force recreation
+kubectl delete pods --all -n argocd
+
+# Watch pods restart
+kubectl get pods -n argocd -w
+```
+
+#### Step 5: Alternative - Use Minikube's image cache
+
+```bash
+# Load images into Minikube's cache
+minikube image load quay.io/argoproj/argocd:v2.8.4
+
+# Or configure Minikube to use local Docker registry
+eval $(minikube docker-env)
+```
+
+#### Step 6: Check DNS resolution and GCP network settings
+
+**If DNS or connectivity fails, check GCP network configuration:**
+
+```bash
+# Test DNS inside Minikube
+minikube ssh -- nslookup quay.io
+
+# If DNS fails, configure CoreDNS (see Method 1 in Step 2 above)
+# Or configure DNS in Minikube's Docker container (see Method 2 in Step 2 above)
+```
+
+**Check GCP Firewall Rules for outbound traffic:**
+
+1. Go to **GCP Console → VPC Network → Firewall Rules**
+2. Ensure there's a rule allowing **egress (outbound)** traffic:
+   - Direction: `Egress`
+   - Action: `Allow`
+   - Targets: `All instances in the network`
+   - Destination IP ranges: `0.0.0.0/0`
+   - Protocols and ports: `All` or `tcp:443, tcp:80, tcp:53, udp:53`
+
+**If no egress rule exists, create one:**
+
+```bash
+# Using gcloud CLI (if available)
+gcloud compute firewall-rules create allow-egress \
+  --direction=EGRESS \
+  --priority=1000 \
+  --network=default \
+  --action=ALLOW \
+  --rules=all \
+  --destination-ranges=0.0.0.0/0
+```
+
+**Or create via GCP Console:**
+- Go to **VPC Network → Firewall → Create Firewall Rule**
+- Name: `allow-egress`
+- Direction: `Egress`
+- Action: `Allow`
+- Targets: `All instances in the network`
+- Destination IP ranges: `0.0.0.0/0`
+- Protocols and ports: `All`
+
+**Check VM's external IP and network tags:**
+
+```bash
+# Check if VM has external IP
+curl ifconfig.me
+
+# Check network interface
+ip addr show
+
+# Test if VM can reach external services
+curl -v https://quay.io
+```
+
+#### Step 7: Verify ArgoCD is working
+
+```bash
+# Check all pods are running
+kubectl get pods -n argocd
+
+# All pods should show "Running" status
+# If any are still ImagePullBackOff, check the specific pod:
+kubectl describe pod <pod-name> -n argocd
+
+# Get ArgoCD admin password
+kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
+### Application pods in ImagePullBackOff
+
+If your application pods (llmops-app) are also in ImagePullBackOff:
+
+```bash
+# Check what image it's trying to pull
+kubectl describe pod llmops-app-7dc9494c78-cvpgv -n argocd
+
+# Verify the image exists in DockerHub
+# If using a private registry, ensure image pull secrets are configured
+
+# Delete the failing pods (they will be recreated)
+kubectl delete pod llmops-app-7dc9494c78-cvpgv -n argocd
+
+# Or delete all app pods
+kubectl delete pods -l app=llmops-app -n argocd
+```
+
+### Can't access services externally
+- Verify firewall rules allow traffic
+- Check if services are NodePort type
+- Ensure port-forwarding is running
+- Verify external IP is correct
+
+---
+
 https://github.com/data-guru0/STUDY-BUDDY-AI
