@@ -23,4 +23,9 @@ spec:
             secretKeyRef:
               name: groq-api-secret
               key: GROQ_API_KEY
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: groq-api-secret
+              key: OPENAI_API_KEY
 

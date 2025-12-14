@@ -692,9 +692,10 @@ argocd login 34.72.5.170:31704 --username admin --password $(kubectl get secret 
 
 ### Important:
 
-```groovy
+```bash
 kubectl create secret generic groq-api-secret \
-  --from-literal=GROQ_API_KEY="" \
+  --from-literal=GROQ_API_KEY="your-groq-api-key" \
+  --from-literal=OPENAI_API_KEY="your-openai-api-key" \
   -n argocd
 ```
 
@@ -1711,7 +1712,18 @@ kubectl get secret groq-api-secret -n argocd
 
 # If missing, create it:
 kubectl create secret generic groq-api-secret \
-  --from-literal=GROQ_API_KEY="your-api-key" \
+  --from-literal=GROQ_API_KEY="your-groq-api-key" \
+  --from-literal=OPENAI_API_KEY="your-openai-api-key" \
+  -n argocd
+
+# If secret already exists, update it:
+# Get existing GROQ_API_KEY
+GROQ_KEY=$(kubectl get secret groq-api-secret -n argocd -o jsonpath='{.data.GROQ_API_KEY}' | base64 -d)
+# Delete and recreate with both keys
+kubectl delete secret groq-api-secret -n argocd
+kubectl create secret generic groq-api-secret \
+  --from-literal=GROQ_API_KEY="$GROQ_KEY" \
+  --from-literal=OPENAI_API_KEY="your-openai-api-key" \
   -n argocd
 ```
 
@@ -1722,6 +1734,283 @@ kubectl get svc llmops-service -n argocd -o yaml | grep selector
 kubectl get pods -n argocd --show-labels | grep llmops-app
 
 # Ensure labels match
+```
+
+**Issue: Application Not Loading on Port 9090 - Complete Troubleshooting Guide**
+
+Follow these steps in order:
+
+#### Step 1: Check if Port Forward Service is Running
+
+```bash
+# Check systemd service status
+sudo systemctl status app-portforward.service
+
+# Check if process is running
+ps aux | grep "port-forward.*llmops-service" | grep -v grep
+
+# Check service logs
+sudo journalctl -u app-portforward.service -n 50 --no-pager
+```
+
+**If service is not running:**
+```bash
+# Start the service
+sudo systemctl start app-portforward.service
+
+# Check status again
+sudo systemctl status app-portforward.service
+```
+
+#### Step 2: Check if Application Pods are Running
+
+```bash
+# Check if pods exist and are running
+kubectl get pods -n argocd | grep llmops-app
+
+# Check pod status in detail
+kubectl get pods -n argocd -l app=llmops-app -o wide
+
+# Check pod logs for errors
+kubectl logs -n argocd -l app=llmops-app --tail=50
+```
+
+**If pods are not running:**
+```bash
+# Check pod events
+kubectl describe pod <pod-name> -n argocd
+
+# Check if pods are in CrashLoopBackOff
+kubectl get pods -n argocd | grep llmops-app
+```
+
+#### Step 3: Check if Service Exists
+
+```bash
+# Check if service exists
+kubectl get svc -n argocd | grep llmops-service
+
+# Get service details
+kubectl get svc llmops-service -n argocd -o yaml
+
+# Check service endpoints
+kubectl get endpoints llmops-service -n argocd
+```
+
+**If service doesn't exist:**
+```bash
+# Apply the service manifest
+kubectl apply -f manifests/service.yaml
+
+# Verify service was created
+kubectl get svc -n argocd
+```
+
+#### Step 4: Verify Service Selector Matches Pod Labels
+
+```bash
+# Check service selector
+kubectl get svc llmops-service -n argocd -o jsonpath='{.spec.selector}'
+
+# Check pod labels
+kubectl get pods -n argocd -l app=llmops-app --show-labels
+
+# They should match! Service selector should match pod labels
+```
+
+**If they don't match, fix the service:**
+```bash
+# Edit the service
+kubectl edit svc llmops-service -n argocd
+
+# Or reapply the service manifest
+kubectl apply -f manifests/service.yaml
+```
+
+#### Step 5: Check if Minikube Tunnel is Running
+
+```bash
+# Check minikube tunnel service
+sudo systemctl status minikube-tunnel.service
+
+# Check if process is running
+ps aux | grep "minikube tunnel" | grep -v grep
+
+# If not running, start it
+sudo systemctl start minikube-tunnel.service
+```
+
+#### Step 6: Test Port Forwarding Manually
+
+```bash
+# Stop the systemd service temporarily
+sudo systemctl stop app-portforward.service
+
+# Try port forwarding manually to see errors
+kubectl port-forward svc/llmops-service -n argocd --address 0.0.0.0 9090:80
+
+# If it works manually, the issue is with the systemd service
+# If it doesn't work, check the error message
+```
+
+#### Step 7: Check if Port 9090 is Listening
+
+```bash
+# Check if port 9090 is listening
+sudo netstat -tlnp | grep 9090
+# OR
+sudo ss -tlnp | grep 9090
+
+# Check from localhost
+curl http://localhost:9090
+
+# Check from external IP (replace with your VM IP)
+curl http://<VM_EXTERNAL_IP>:9090
+```
+
+#### Step 8: Check Firewall Rules
+
+```bash
+# Check GCP firewall rules (if using GCP)
+# Go to: GCP Console → VPC Network → Firewall Rules
+# Ensure there's a rule allowing ingress on port 9090
+
+# Check local firewall (if ufw is enabled)
+sudo ufw status
+sudo ufw allow 9090/tcp
+```
+
+#### Step 9: Check Application Deployment
+
+```bash
+# Check deployment status
+kubectl get deployment llmops-app -n argocd
+
+# Check deployment details
+kubectl describe deployment llmops-app -n argocd
+
+# Check if deployment has correct image
+kubectl get deployment llmops-app -n argocd -o jsonpath='{.spec.template.spec.containers[0].image}'
+
+# Check replicasets
+kubectl get rs -n argocd | grep llmops-app
+```
+
+#### Step 10: Check Application Container Logs
+
+```bash
+# Get pod name
+POD_NAME=$(kubectl get pods -n argocd -l app=llmops-app -o jsonpath='{.items[0].metadata.name}')
+
+# Check logs
+kubectl logs $POD_NAME -n argocd
+
+# Check previous logs if container restarted
+kubectl logs $POD_NAME -n argocd --previous
+
+# Check if Streamlit is running on port 8501 inside container
+kubectl exec -it $POD_NAME -n argocd -- netstat -tlnp | grep 8501
+```
+
+#### Step 11: Verify Service Port Mapping
+
+```bash
+# Check service port configuration
+kubectl get svc llmops-service -n argocd -o yaml | grep -A 5 ports
+
+# Should show:
+# - port: 80
+#   targetPort: 8501
+```
+
+**If targetPort is wrong:**
+```bash
+# Edit the service
+kubectl edit svc llmops-service -n argocd
+# Change targetPort to 8501 (Streamlit default port)
+```
+
+#### Step 12: Quick Fix - Restart Everything
+
+```bash
+# Restart all services
+sudo systemctl restart minikube-tunnel.service
+sleep 5
+sudo systemctl restart argocd-portforward.service
+sudo systemctl restart app-portforward.service
+
+# Check status
+sudo systemctl status app-portforward.service
+```
+
+#### Step 13: Alternative - Use NodePort Instead
+
+If port-forwarding continues to fail, you can expose the service as NodePort:
+
+```bash
+# Edit the service to use NodePort
+kubectl edit svc llmops-service -n argocd
+
+# Change: type: NodePort
+# Save and exit
+
+# Get the NodePort
+kubectl get svc llmops-service -n argocd
+
+# Access via: http://<VM_EXTERNAL_IP>:<NODEPORT>
+```
+
+#### Common Issues and Solutions
+
+**Issue 1: Service selector doesn't match pod labels**
+```bash
+# Fix: Update service selector or pod labels to match
+kubectl get svc llmops-service -n argocd -o yaml | grep selector
+kubectl get pods -n argocd -l app=llmops-app --show-labels
+```
+
+**Issue 2: Pods are in ImagePullBackOff**
+```bash
+# Check image name
+kubectl get deployment llmops-app -n argocd -o jsonpath='{.spec.template.spec.containers[0].image}'
+
+# Update deployment with correct image
+kubectl set image deployment/llmops-app llmops-app=blessedman776/studybuddy:<tag> -n argocd
+```
+
+**Issue 3: Pods are in CrashLoopBackOff**
+```bash
+# Check logs
+kubectl logs <pod-name> -n argocd --previous
+
+# Check if GROQ_API_KEY secret exists
+kubectl get secret groq-api-secret -n argocd
+
+# If missing, create it:
+kubectl create secret generic groq-api-secret \
+  --from-literal=GROQ_API_KEY="your-groq-api-key" \
+  --from-literal=OPENAI_API_KEY="your-openai-api-key" \
+  -n argocd
+
+# If secret already exists, update it:
+# Get existing GROQ_API_KEY
+GROQ_KEY=$(kubectl get secret groq-api-secret -n argocd -o jsonpath='{.data.GROQ_API_KEY}' | base64 -d)
+# Delete and recreate with both keys
+kubectl delete secret groq-api-secret -n argocd
+kubectl create secret generic groq-api-secret \
+  --from-literal=GROQ_API_KEY="$GROQ_KEY" \
+  --from-literal=OPENAI_API_KEY="your-openai-api-key" \
+  -n argocd
+```
+
+**Issue 4: Port 9090 is already in use**
+```bash
+# Find what's using port 9090
+sudo lsof -i :9090
+# OR
+sudo netstat -tlnp | grep 9090
+
+# Kill the process or use a different port
 ```
 
 **Issue: Cannot connect to port 9090**
